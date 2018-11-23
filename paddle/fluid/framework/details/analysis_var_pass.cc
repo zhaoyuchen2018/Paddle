@@ -162,39 +162,43 @@ std::unique_ptr<ir::Graph> AnalysisVarPass::ApplyImpl(
 
     auto* op_desc = op->Op();
     if (OpHasSubBlock(op_desc)) {
-      // if (FLAGS_enable_subgraph_optimize) {
-      //   // conditional block, while op
-      //   auto* sub_block_desc =
-      //       AttrReader(op_desc->GetAttrMap()).Get<BlockDesc*>("sub_block");
-      //   for (auto* sub_op_desc : sub_block_desc->AllOps()) {
-      //     for (auto& sub_op_output_var_pair : sub_op_desc->Outputs()) {
-      //       for (auto& sub_op_output_var : sub_op_output_var_pair.second) {
-      //         auto* var_desc = sub_block_desc->FindVar(sub_op_output_var);
-      //         ir::Node* var = ir::CreateDummyNode(var_desc).get();
-      //         if (NodeCanReused(var)) {
-      //           int node_idx_in_pool = -1;
-      //           ir::Node* cached_var = nullptr;
-      //           if (NodeMatch(var, &cached_var, &node_idx_in_pool)) {
-      //             VLOG(3) << string::Sprintf(
-      //                 "cache idx %d, pool size %d, var is %s, cached "
-      //                 "var %s",
-      //                 node_idx_in_pool, static_cast<int>(pool.size()),
-      //                 DebugString(var), DebugString(cached_var));
-      //             // pool.erase(cached_var);
-      //             // subblock is not in IR graph. Modify the block_desc
-      //             // immediately
-      //             // to make the subblock variable reuse strategy take
-      //             // effect.
-      //             sub_op_desc->Rename(var->Name(), cached_var->Name());
-      //             if (sub_op_desc->Block()->HasVar(var->Name())) {
-      //               sub_op_desc->Block()->RemoveVar(var->Name());
-      //             }
-      //           }
-      //         }
-      //       }
-      //     }
-      //   }
-      // } else {
+      if (!FLAGS_enable_subgraph_optimize) continue;
+      // conditional block, while op
+      auto* sub_block_desc =
+          AttrReader(op_desc->GetAttrMap()).Get<BlockDesc*>("sub_block");
+      int sub_counter = 0;
+      for (auto* sub_op_desc : sub_block_desc->AllOps()) {
+        for (auto& sub_op_output_var_pair : sub_op_desc->Outputs()) {
+          for (auto& sub_op_output_var : sub_op_output_var_pair.second) {
+            auto* var_desc = sub_block_desc->FindVar(sub_op_output_var);
+            ir::Node* var = ir::CreateDummyNode(var_desc).get();
+            if (NodeCanReused(var)) {
+              ir::Node* cache = pool.NodeMatch(var);
+              if (cache != nullptr) {
+                if (var->Var()->GetDataType() != cache->Var()->GetDataType()) {
+                  continue;
+                }
+                int node_idx_in_pool = pool.GetPosition(cache);
+                VLOG(3) << string::Sprintf(
+                    "!!! %s,  %s => %s, cache idx %d, pool size %d",
+                    std::to_string(sub_counter), DebugString(var),
+                    DebugString(cache), node_idx_in_pool,
+                    static_cast<int>(pool.size()));
+                sub_counter += 1;
+                // NOTE(dzh): subblock is not in IR graph. Modify the block_desc
+                // immediately to make the subblock variable reuse strategy take
+                // effect. Because it is a single op in graph. No need to update
+                // the ir nodes.
+                sub_op_desc->Rename(var->Name(), cache->Name());
+                if (sub_op_desc->Block()->HasVar(var->Name())) {
+                  sub_op_desc->Block()->RemoveVar(var->Name());
+                }
+              }
+            }
+          }
+        }
+      }
+    } else {
       VLOG(3) << op->Name()
               << " has subblock, but disable subgraph optimize. skipped.";
       continue;
