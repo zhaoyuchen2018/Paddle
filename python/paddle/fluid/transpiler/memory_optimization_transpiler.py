@@ -176,6 +176,17 @@ class ControlFlowGraph(object):
                     worklist.append(d)
 
     def _fill_pool(self, i, is_forward):
+        def comparator(x, cache):
+            x_shape = x[1]
+            cache_shape = cache[1]
+            x_size = abs(reduce(lambda x, y: x * y, x_shape))
+            cache_size = abs(reduce(lambda x, y: x * y, cache_shape))
+            if (x_shape[0] == -1 and cache_shape[0] == -1) or \
+               (x_shape[0] != -1 and cache_shape[0] != -1) :
+                return x_size <= cache_size
+            else:
+                return False
+
         block_desc = self._ops[i].block()
         in_diff, _ = self._get_diff(self._live_in[i], self._live_out[i])
         # NOTE: must sort the in_diff set for cases that get different cache var.
@@ -189,7 +200,24 @@ class ControlFlowGraph(object):
                 cache = (var_name, self._find_var(block_desc, var_name,
                                                   is_forward).shape())
                 if cache not in self.pool:
-                    self.pool.append(cache)
+                    i = 0
+                    while i < len(self.pool):
+                        mycache = self.pool[i]
+                        mysize = mycache[1][0]
+                        cache_size = cache[1][0]
+                        if (mysize == -1 and cache_size == -1) or \
+                           (mysize != -1 and cache_size != -1):
+                            if comparator(mycache, cache):
+                                i += 1
+                            else:
+                                break
+                        elif mysize == -1 and cache_size != -1:
+                            i += 1
+                        elif mysize != -1 and cache_size == -1:
+                            break
+                    self.pool.insert(i, cache)
+                    # self.pool.append(cache)
+                    # self.pool.sort(cmp=comparator)
 
     def _get_diff(self, a, b):
         u = a & b
@@ -228,7 +256,7 @@ class ControlFlowGraph(object):
     def _update_skip_opt_set(self):
         for i in range(self.op_size):
             op = self._ops[i]
-            if op.type() == "fill_constant" and op.attr("force_cpu") == True:
+            if op.has_attr("force_cpu") and op.attr("force_cpu") == True:
                 self._skip_opt.update(op.output_arg_names())
 
     def release_memory(self, skip_opt_set=None):
@@ -280,6 +308,7 @@ class ControlFlowGraph(object):
         # update skip set to meet users' demand
         if skip_opt_set:
             self._skip_opt.update(skip_opt_set)
+        counter = 0
         for i in range(self.op_size):
             op = self._ops[i]
             if op.type() in SUB_BLOCK_OPS:
@@ -322,15 +351,13 @@ class ControlFlowGraph(object):
                         if not compare_shape(x_shape, cache_shape, level):
                             continue
                         # TODO(qijun): dtype_to_size[x_dtype] and dtype_to_size[cache_dtype]
-                        if x_dtype != cache_dtype:
-                            continue
-
                         if PRINT_LOG:
-                            print(("Hit Cache !!!! cache pool index "
-                                   "is %d, var name is %s, "
-                                   "cached var name is %s, "
-                                   "var shape is %s ") % (index, x, cache_var,
-                                                          str(cache_shape)))
+                            print(
+                                ("!!! %d,  %s => %s, cache idx %d, pool size %d"
+                                 % (counter, x + str(x_shape),
+                                    cache_var + str(cache_shape), index,
+                                    len(self.pool))))
+                            counter += 1
                         self.pool.pop(index)
                         # Rename the var to the cache var already with
                         # memory allocated in order to reuse the memory.
