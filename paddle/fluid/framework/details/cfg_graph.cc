@@ -25,15 +25,6 @@ namespace details {
 
 ControlFlowGraph::ControlFlowGraph(const ir::Graph& graph) : is_ir_graph(true) {
   ops_ = ir::SortOperationsInSequence(graph);
-  for (auto& op : ops_) {
-    PADDLE_ENFORCE(op->IsOp(), "expect operator in graph.");
-    successors_[op] = std::set<ir::Node*>();
-    predecessors_[op] = std::set<ir::Node*>();
-    live_in_[op] = std::unordered_set<std::string>();
-    live_out_[op] = std::unordered_set<std::string>();
-    uses_[op] = std::unordered_set<std::string>();
-    defs_[op] = std::unordered_set<std::string>();
-  }
   ConnectNodes();
 }
 
@@ -86,25 +77,30 @@ void ControlFlowGraph::BuildCFGGraph() {
     }
   }
 }
+template <typename Callback>
+inline void FilterVariable(const std::vector<ir::Node*>& nodes,
+                           Callback callback) {
+  for (auto var : nodes) {
+    if (var->IsVar() && !var->IsCtrlVar()) {
+      callback(var);
+    }
+  }
+}
 
 void ControlFlowGraph::ConnectNodes() {
   for (size_t i = 0; i < ops_.size(); ++i) {
     auto& op = ops_[i];
-    if (i < ops_.size() - 1) {
-      auto& next_op = ops_[i + 1];
-      successors_[op].insert(next_op);
+    try {
+      auto& next_op = ops_.at(i + 1);
+      successors_[op].emplace(next_op);
       predecessors_[next_op].insert(op);
+    } catch (std::out_of_range&) {
+      // do nothing
     }
-    for (auto& input_var : op->inputs) {
-      if (input_var->IsVar() && !input_var->IsCtrlVar()) {
-        uses_[op].insert(input_var->Name());
-      }
-    }
-    for (auto& output_var : op->outputs) {
-      if (output_var->IsVar() && !output_var->IsCtrlVar()) {
-        defs_[op].insert(output_var->Name());
-      }
-    }
+
+    FilterVariable(op->inputs, [&](ir::Node* var) { uses_[op].emplace(var); });
+
+    FilterVariable(op->outputs, [&](ir::Node* var) { defs_[op].emplace(var); });
   }
 }
 

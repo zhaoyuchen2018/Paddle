@@ -32,11 +32,11 @@ namespace details {
 
 class ControlFlowGraph {
  public:
-  ControlFlowGraph() {}
+  ControlFlowGraph() = default;
   // For IR Graph in parallelexecutor
   explicit ControlFlowGraph(const ir::Graph& graph);
   // For ProgramDesc in executor
-  explicit ControlFlowGraph(const ProgramDesc& prog, const int block_id);
+  ControlFlowGraph(const ProgramDesc& prog, const int block_id);
 
   ~ControlFlowGraph();
 
